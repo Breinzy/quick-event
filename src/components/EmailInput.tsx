@@ -25,7 +25,9 @@ export default function EmailInput({ onSubmit, isLoading = false, loadingMessage
           value={emailText}
           onChange={(e) => setEmailText(e.target.value)}
           className="w-full h-64 p-4 bg-gray-900/50 border border-gray-600 text-white rounded-lg resize-vertical placeholder-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
-          placeholder="Paste your email content here..."
+          placeholder="Paste your email content here...
+
+💡 Tip: If there are meeting links, try copying them separately and including the full URL in your paste"
           required
           disabled={isLoading}
         />

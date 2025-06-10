@@ -7,6 +7,7 @@ interface CalendarEvent {
   jobName: string
   location: string
   details: string
+  colorId?: string
 }
 
 // Initialize Google Calendar API
@@ -51,6 +52,7 @@ export async function createEvent(eventData: CalendarEvent): Promise<{eventId: s
       summary: eventData.jobName || 'Quick Event',
       location: eventData.location,
       description: eventData.details,
+      colorId: eventData.colorId,
       start: {
         dateTime: startDateTime,
         timeZone: 'America/New_York', // Adjust timezone as needed

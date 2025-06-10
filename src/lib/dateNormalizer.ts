@@ -1,3 +1,5 @@
+import { parseTimeRange, normalizeDateFormat } from './timeParser'
+
 interface NormalizedJob {
   date: string // YYYY-MM-DD format
   startTime: string // HH:MM format (24-hour)
@@ -5,18 +7,26 @@ interface NormalizedJob {
   jobName: string
   location: string
   details: string
+  colorId?: string
 }
 
 export function normalizeParsedJob(parsed: any): NormalizedJob {
   const currentYear = new Date().getFullYear()
   
+  // Use the new time parser for better time handling
+  const timeResult = parseTimeRange(parsed.time || '')
+  
+  // Use the new date normalizer
+  const normalizedDate = normalizeDateFormat(parsed.date || '') || normalizeDate(parsed.date || '', currentYear)
+  
   return {
-    date: normalizeDate(parsed.date || '', currentYear),
-    startTime: normalizeStartTime(parsed.time || ''),
-    endTime: normalizeEndTime(parsed.time || ''),
+    date: normalizedDate,
+    startTime: timeResult.startTime || normalizeStartTime(parsed.time || ''),
+    endTime: timeResult.endTime || normalizeEndTime(parsed.time || ''),
     jobName: parsed.jobName || '',
     location: parsed.location || '',
-    details: parsed.details || ''
+    details: parsed.details || '',
+    colorId: parsed.colorId
   }
 }
 

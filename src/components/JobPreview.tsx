@@ -8,6 +8,7 @@ interface ParsedJob {
   jobName?: string
   location?: string
   details?: string
+  colorId?: string
 }
 
 interface JobPreviewProps {
@@ -103,10 +104,48 @@ export default function JobPreview({ job, onConfirm, onBack, isLoading = false, 
             value={editedJob.details || ''}
             onChange={(e) => handleInputChange('details', e.target.value)}
             className="w-full px-4 py-3 bg-gray-900/50 border border-gray-600 text-white rounded-lg focus:border-blue-500 focus:ring-1 focus:ring-blue-500 resize-vertical transition-all"
-            rows={3}
+            rows={6}
             placeholder="Additional details (codes, instructions, notes, etc.)"
             disabled={isLoading}
           />
+          <div className="mt-2 text-xs text-gray-500">
+            💡 Tip: Meeting links and contact info will be saved in your calendar event
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-gray-400 text-sm mb-3">Event Color:</label>
+          <div className="grid grid-cols-6 gap-3">
+            {[
+              { id: '1', color: '#a4bdfc', name: 'Lavender' },
+              { id: '2', color: '#7ae7bf', name: 'Sage' },
+              { id: '3', color: '#dbadff', name: 'Grape' },
+              { id: '4', color: '#ff887c', name: 'Flamingo' },
+              { id: '5', color: '#fbd75b', name: 'Banana' },
+              { id: '6', color: '#ffb878', name: 'Tangerine' },
+              { id: '7', color: '#46d6db', name: 'Peacock' },
+              { id: '8', color: '#e1e1e1', name: 'Graphite' },
+              { id: '9', color: '#5484ed', name: 'Blueberry' },
+              { id: '10', color: '#51b749', name: 'Basil' },
+              { id: '11', color: '#dc2127', name: 'Tomato' }
+            ].map(colorOption => (
+              <button
+                key={colorOption.id}
+                onClick={() => handleInputChange('colorId', colorOption.id)}
+                className={`w-10 h-10 rounded-full border-2 transition-all hover:scale-110 ${
+                  editedJob.colorId === colorOption.id 
+                    ? 'border-white shadow-lg ring-2 ring-blue-500' 
+                    : 'border-gray-600 hover:border-gray-400'
+                }`}
+                style={{ backgroundColor: colorOption.color }}
+                title={colorOption.name}
+                disabled={isLoading}
+              />
+            ))}
+          </div>
+          <div className="mt-2 text-xs text-gray-500">
+            🎨 Choose a color for your calendar event
+          </div>
         </div>
       </div>
       
