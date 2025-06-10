@@ -5,6 +5,7 @@ import EmailInput from '@/components/EmailInput'
 import JobPreview from '@/components/JobPreview'
 import Notification from '@/components/Notification'
 import EventHistory from '@/components/EventHistory'
+import AccessControl from '@/components/AccessControl'
 import { normalizeParsedJob } from '@/lib/dateNormalizer'
 
 interface ParsedJob {
@@ -47,6 +48,17 @@ export default function Home() {
     message: ''
   })
   const [eventHistory, setEventHistory] = useState<HistoryEvent[]>([])
+  const [hasAccess, setHasAccess] = useState(false)
+
+  // Check if user already has access in session
+  React.useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const savedAccess = sessionStorage.getItem('quickEventAccess')
+      if (savedAccess === 'granted') {
+        setHasAccess(true)
+      }
+    }
+  }, [])
 
   const handleEmailSubmit = async (text: string) => {
     setEmailText(text)
@@ -199,6 +211,11 @@ export default function Home() {
 
   const handleClearHistory = () => {
     setEventHistory([])
+  }
+
+  // Show access control if user doesn't have access
+  if (!hasAccess) {
+    return <AccessControl onAccessGranted={() => setHasAccess(true)} />
   }
 
   return (
