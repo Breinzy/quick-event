@@ -137,7 +137,7 @@ export default function Home() {
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify(editedJob),
+          body: JSON.stringify({ jobData: editedJob, prompt: emailText }),
         })
       ])
       
@@ -250,7 +250,7 @@ export default function Home() {
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify(event),
+          body: JSON.stringify({ jobData: event, prompt: `[File Upload: ${fileName}]` }),
         })
       ])
       

@@ -79,19 +79,26 @@ function normalizeDate(dateStr: string, currentYear: number): string {
 
 function normalizeStartTime(timeStr: string): string {
   if (!timeStr) return ''
+  const parsed = parseTimeRange(timeStr)
+  if (parsed.isValid && parsed.startTime) return parsed.startTime
   
-  // Handle ranges like "10-3pm" or "10am-3pm"
-  const rangeMatch = timeStr.match(/(\d{1,2})(?:am|pm)?\s*[-–]\s*(\d{1,2})\s*(am|pm)/i)
+  // Handle ranges like "10-3pm", "10am-3pm", "2-2:30", "2-2:30pm"
+  const rangeMatch = timeStr.match(/(\d{1,2})(?::(\d{2}))?(?:am|pm)?\s*[-–]\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i)
   if (rangeMatch) {
     const startHour = parseInt(rangeMatch[1])
-    const endHour = parseInt(rangeMatch[2])
-    const endPeriod = rangeMatch[3].toLowerCase()
+    const startMinutes = rangeMatch[2] || '00'
+    const endHour = parseInt(rangeMatch[3])
+    const endMinutes = rangeMatch[4] || '00'
+    const endPeriod = rangeMatch[5]?.toLowerCase()
     
-    // If start hour > end hour, assume start is opposite period
-    // e.g., "10-3pm" = "10am-3pm", "9-2pm" = "9am-2pm"
+    // If end period is specified, determine start period
     let startPeriod = endPeriod
-    if (startHour > endHour) {
-      startPeriod = endPeriod === 'pm' ? 'am' : 'pm'
+    if (endPeriod) {
+      // If start hour > end hour, assume start is opposite period
+      // e.g., "10-3pm" = "10am-3pm", "9-2pm" = "9am-2pm"
+      if (startHour > endHour) {
+        startPeriod = endPeriod === 'pm' ? 'am' : 'pm'
+      }
     }
     
     let hour24 = startHour
@@ -101,7 +108,7 @@ function normalizeStartTime(timeStr: string): string {
       hour24 = 0
     }
     
-    return `${hour24.toString().padStart(2, '0')}:00`
+    return `${hour24.toString().padStart(2, '0')}:${startMinutes}`
   }
   
   // Handle single times like "10am" or "2:30 PM"
@@ -125,12 +132,15 @@ function normalizeStartTime(timeStr: string): string {
 
 function normalizeEndTime(timeStr: string): string {
   if (!timeStr) return ''
+  const parsed = parseTimeRange(timeStr)
+  if (parsed.isValid && parsed.endTime) return parsed.endTime
   
-  // Handle ranges like "10-3pm" or "10am-3pm"
-  const rangeMatch = timeStr.match(/(\d{1,2})(?:am|pm)?\s*[-–]\s*(\d{1,2})\s*(am|pm)/i)
+  // Handle ranges like "10-3pm", "10am-3pm", "2-2:30", "2-2:30pm"
+  const rangeMatch = timeStr.match(/(\d{1,2})(?::(\d{2}))?(?:am|pm)?\s*[-–]\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i)
   if (rangeMatch) {
-    const endHour = parseInt(rangeMatch[2])
-    const endPeriod = rangeMatch[3].toLowerCase()
+    const endHour = parseInt(rangeMatch[3])
+    const endMinutes = rangeMatch[4] || '00'
+    const endPeriod = rangeMatch[5]?.toLowerCase()
     
     let hour24 = endHour
     if (endPeriod === 'pm' && endHour !== 12) {
@@ -139,7 +149,7 @@ function normalizeEndTime(timeStr: string): string {
       hour24 = 0
     }
     
-    return `${hour24.toString().padStart(2, '0')}:00`
+    return `${hour24.toString().padStart(2, '0')}:${endMinutes}`
   }
   
   // For single times, assume 1 hour duration

@@ -27,6 +27,12 @@ export function parseTimeRange(timeString: string): ParsedTime {
     }
   }
 
+  // NEW: Accept flexible ranges like "2-230pm", "8am-9am", "2 PM - 3", and "2 to 3:30 pm"
+  const flexible = parseFlexibleRange(cleanTime)
+  if (flexible) {
+    return { ...flexible, isValid: true }
+  }
+
   // Try to extract single time (e.g., "10:00 AM" or "19:00")
   const singleMatch = cleanTime.match(/(\d{1,2}:\d{2})\s*(AM|PM)?/i)
   
@@ -44,6 +50,12 @@ export function parseTimeRange(timeString: string): ParsedTime {
         isValid: true
       }
     }
+  }
+
+  // NEW: Accept compact single tokens like "230pm" or "8am"
+  const singleLoose = parseLooseTimeToken(cleanTime)
+  if (singleLoose?.hhmm24) {
+    return { startTime: singleLoose.hhmm24, endTime: addHours(singleLoose.hhmm24, 1), isValid: true }
   }
 
   return { isValid: false }
@@ -92,6 +104,109 @@ function addHours(timeStr: string, hoursToAdd: number): string {
   }
 
   return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`
+}
+
+// NEW: Normalize am/pm tokens like "p", "p.m.", "PM" to 'pm'
+function normalizePeriod(input?: string | null): 'am' | 'pm' | undefined {
+  if (!input) return undefined
+  const s = input.toLowerCase().replace(/\./g, '').trim()
+  if (s.startsWith('a')) return 'am'
+  if (s.startsWith('p')) return 'pm'
+  return undefined
+}
+
+// NEW: Parse a loose time token like "2", "2:30", "230", "2pm", "230pm" into its components
+function parseLooseTimeToken(raw: string, inferredPeriod?: 'am' | 'pm'):
+  | { hour12: number; minutes: number; period?: 'am' | 'pm'; hhmm24: string }
+  | undefined {
+  if (!raw) return undefined
+  let token = raw.toLowerCase().trim()
+
+  // Extract explicit period from the token, if present
+  const periodMatch = token.match(/(a\.?m?\.?|p\.?m?\.?)/)
+  let period = normalizePeriod(periodMatch?.[1])
+  if (periodMatch) {
+    token = token.replace(periodMatch[1], '')
+  }
+  if (!period) period = inferredPeriod
+
+  // Keep only digits and colon
+  const digits = token.replace(/[^0-9:]/g, '')
+  if (!digits) return undefined
+
+  let hour = 0
+  let minutes = 0
+
+  if (digits.includes(':')) {
+    const [h, m] = digits.split(':')
+    hour = parseInt(h, 10)
+    minutes = parseInt(m || '0', 10)
+  } else {
+    if (digits.length <= 2) {
+      hour = parseInt(digits, 10)
+      minutes = 0
+    } else if (digits.length === 3) {
+      hour = parseInt(digits.slice(0, 1), 10)
+      minutes = parseInt(digits.slice(1), 10)
+    } else {
+      // 4+ digits -> last two are minutes
+      hour = parseInt(digits.slice(0, digits.length - 2), 10)
+      minutes = parseInt(digits.slice(-2), 10)
+    }
+  }
+
+  if (isNaN(hour) || isNaN(minutes)) return undefined
+  if (minutes < 0 || minutes > 59) return undefined
+  if (hour < 0 || hour > 23) {
+    // For loose parsing, allow 1-12 hours before applying period
+    if (hour < 1 || hour > 12) return undefined
+  }
+
+  // Convert to 24h taking into account period
+  let hour24 = hour
+  if (period) {
+    if (period === 'pm' && hour24 !== 12) hour24 += 12
+    if (period === 'am' && hour24 === 12) hour24 = 0
+  }
+
+  // If no period and hour >= 0, keep as is (could be 24h format)
+  if (hour24 < 0 || hour24 > 23) return undefined
+
+  const hhmm24 = `${hour24.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`
+  return { hour12: hour, minutes, period, hhmm24 }
+}
+
+// NEW: Parse flexible ranges like "2-230pm", "8am-9am", "2 PM - 3", "14-1530", or with 'to'
+function parseFlexibleRange(input: string): { startTime: string; endTime: string } | undefined {
+  const s = input
+    .replace(/[\u2013\u2014]/g, '-') // en/em dashes to hyphen
+    .replace(/\s+to\s+/gi, '-')
+    .replace(/\s*-\s*/g, '-')
+    .trim()
+
+  const parts = s.split('-')
+  if (parts.length !== 2) return undefined
+
+  const leftRaw = parts[0].trim()
+  const rightRaw = parts[1].trim()
+
+  // Parse right first to possibly inherit its period
+  const rightParsedInitial = parseLooseTimeToken(rightRaw)
+  // Then parse left, inheriting period from right if needed
+  let leftParsed = parseLooseTimeToken(leftRaw, rightParsedInitial?.period)
+  let rightParsed = rightParsedInitial
+
+  if (!leftParsed || !rightParsed) return undefined
+
+  // If left had no explicit period but right did, and left hour appears to be greater than right (e.g., 10-3pm),
+  // assume left is the opposite period (10am-3pm)
+  if (!leftParsed.period && rightParsed.period && leftParsed.hour12 > rightParsed.hour12) {
+    const opposite = rightParsed.period === 'pm' ? 'am' : 'pm'
+    leftParsed = parseLooseTimeToken(leftRaw, opposite)
+    if (!leftParsed) return undefined
+  }
+
+  return { startTime: leftParsed.hhmm24, endTime: rightParsed.hhmm24 }
 }
 
 export function normalizeDateFormat(dateStr: string): string | undefined {

@@ -4,7 +4,7 @@ import { normalizeParsedJob } from '@/lib/dateNormalizer'
 
 export async function POST(request: NextRequest) {
   try {
-    const jobData = await request.json()
+    const { jobData, prompt } = await request.json()
     
     if (!jobData) {
       return NextResponse.json(
@@ -24,6 +24,7 @@ export async function POST(request: NextRequest) {
       jobName: normalizedJob.jobName,
       location: normalizedJob.location,
       details: normalizedJob.details,
+      prompt: prompt || '',
       createdAt: new Date().toISOString()
     }
 

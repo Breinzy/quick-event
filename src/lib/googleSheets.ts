@@ -7,6 +7,7 @@ interface JobLogEntry {
   jobName: string
   location: string
   details: string
+  prompt: string
   createdAt: string
 }
 
@@ -58,13 +59,14 @@ export async function appendRow(jobData: JobLogEntry): Promise<void> {
       jobData.jobName,
       jobData.location,
       jobData.details,
+      jobData.prompt,
       jobData.createdAt
     ]
 
     // Append the row to the sheet
     const response = await sheets.spreadsheets.values.append({
       spreadsheetId,
-      range: 'Sheet1!A:H', // Adjust range as needed
+      range: 'Sheet1!A:I', // Updated range to include the prompt column
       valueInputOption: 'RAW',
       requestBody: {
         values: [rowData]
@@ -99,12 +101,13 @@ export async function createHeaders(): Promise<void> {
       'Event Name',
       'Location',
       'Details',
+      'Original Prompt',
       'Created At'
     ]
 
     await sheets.spreadsheets.values.update({
       spreadsheetId,
-      range: 'Sheet1!A1:H1',
+      range: 'Sheet1!A1:I1', // Updated range to include the prompt column
       valueInputOption: 'RAW',
       requestBody: {
         values: [headers]
