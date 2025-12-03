@@ -176,10 +176,11 @@ async function parseWithGemini(text: string): Promise<ParsedJob> {
    const schedStartMatch = text.match(/Scheduled Start:\s*(.+)/i)
    const schedEndMatch = text.match(/Scheduled End:\s*(.+)/i)
    
-   // Format 2: Header time format "2:00 PM to 3:30 PM"
-   const headerTimeMatch = text.match(/(\d{1,2}:\d{2}\s*(?:AM|PM))\s+to\s+(\d{1,2}:\d{2}\s*(?:AM|PM))/i)
-  // Flexible format: ranges with hyphen or "to", allowing compact tokens (e.g., 2-230pm, 8am-9am, 2 PM - 3)
-  const flexibleTimeMatch = text.match(/(\b[^\n]{0,20}?)\b(\d{1,2}(?::\d{2})?(?:\s*[AaPp]\.?[Mm]\.?)?)\s*(?:-|to)\s*(\d{1,2}(?::\d{2})?(?:\s*[AaPp]\.?[Mm]\.?)?)\b/m)
+  // Format 2: Header time format "2:00 PM to 3:30 PM"
+  const headerTimeMatch = text.match(/(\d{1,2}:\d{2}\s*(?:AM|PM))\s+to\s+(\d{1,2}:\d{2}\s*(?:AM|PM))/i)
+  // Flexible format: ranges with hyphen or "to", allowing compact tokens (e.g., 2-230pm, 8am-9am, 2 PM - 3, 1-3pm)
+  // This pattern matches time ranges where AM/PM might be on one or both sides
+  const flexibleTimeMatch = text.match(/\b(\d{1,2}(?::\d{2})?(?:\s*[AaPp]\.?[Mm]\.?)?)\s*(?:-|to|–|—)\s*(\d{1,2}(?::\d{2})?(?:\s*[AaPp]\.?[Mm]\.?)?)\b/i)
    
    let startTime = ''
    let endTime = ''
@@ -197,17 +198,17 @@ async function parseWithGemini(text: string): Promise<ParsedJob> {
      startTime = headerTimeMatch[1].trim()
      endTime = headerTimeMatch[2].trim()
      parsed.time = `${startTime} to ${endTime}`
-   } else if (flexibleTimeMatch) {
-     const compact = `${flexibleTimeMatch[2]} - ${flexibleTimeMatch[3]}`
-     const norm = parseTimeRange(compact)
-     if (norm.isValid && norm.startTime && norm.endTime) {
-       // Re-render to AM/PM user-friendly format for details
-       const rendered = renderAMPM(norm.startTime) + ' to ' + renderAMPM(norm.endTime)
-       parsed.time = rendered
-       startTime = rendered.split(' to ')[0]
-       endTime = rendered.split(' to ')[1]
-     }
-   } else if (schedStartMatch && schedEndMatch) {
+  } else if (flexibleTimeMatch) {
+    const compact = `${flexibleTimeMatch[1]} - ${flexibleTimeMatch[2]}`
+    const norm = parseTimeRange(compact)
+    if (norm.isValid && norm.startTime && norm.endTime) {
+      // Re-render to AM/PM user-friendly format for details
+      const rendered = renderAMPM(norm.startTime) + ' to ' + renderAMPM(norm.endTime)
+      parsed.time = rendered
+      startTime = rendered.split(' to ')[0]
+      endTime = rendered.split(' to ')[1]
+    }
+  } else if (schedStartMatch && schedEndMatch) {
      // Fallback to scheduled times
      startTime = schedStartMatch[1].trim()
      endTime = schedEndMatch[1].trim()
@@ -339,36 +340,82 @@ async function parseWithGemini(text: string): Promise<ParsedJob> {
    
    parsed.details = details.join('\n\n')
  
-   // Fallback patterns for other email types
-   if (!parsed.jobName) {
-     const jobPatterns = [
-       /(?:subject|re):\s*([^\n\.!?]{5,50})/i,
-       /(?:meeting|event|appointment)[\s:]*([^\n\.!?]{5,50})/i,
-     ]
+  // Fallback patterns for other email types
+  if (!parsed.jobName) {
+    const jobPatterns = [
+      /(?:subject|re):\s*([^\n\.!?]{5,50})/i,
+      /(?:meeting|event|appointment)[\s:]*([^\n\.!?]{5,50})/i,
+    ]
+
+    for (const pattern of jobPatterns) {
+      const match = text.match(pattern)
+      if (match) {
+        parsed.jobName = match[1].trim().replace(/^[:\-\s]+|[:\-\s]+$/g, '')
+        break
+      }
+    }
+  }
  
-     for (const pattern of jobPatterns) {
-       const match = text.match(pattern)
-       if (match) {
-         parsed.jobName = match[1].trim().replace(/^[:\-\s]+|[:\-\s]+$/g, '')
-         break
-       }
-     }
-   }
- 
-   // Generic date fallback
-   if (!parsed.date) {
-     const fallbackDate = text.match(/\b\d{1,2}\/\d{1,2}\/\d{4}\b|\b\w+\s+\d{1,2},?\s+\d{4}\b/i)
-     if (fallbackDate) parsed.date = fallbackDate[0]
-   }
- 
-   // Generic time fallback
-   if (!parsed.time) {
-     const fallbackTime = text.match(/\b\d{1,2}:\d{2}\s*(?:AM|PM)\b/i)
-     if (fallbackTime) parsed.time = fallbackTime[0]
-   }
- 
-   return parsed
- }
+  // Generic date fallback - handle various formats including "december 2nd", "december 2", etc.
+  if (!parsed.date) {
+    // Try "Month Day, Year" format (e.g., "December 2, 2024")
+    const monthDayYear = text.match(/\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2}(?:st|nd|rd|th)?,?\s+\d{4}\b/i)
+    if (monthDayYear) {
+      parsed.date = monthDayYear[0]
+    } else {
+      // Try "Month Day" format (e.g., "december 2nd", "december 2")
+      const monthDay = text.match(/\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2}(?:st|nd|rd|th)?\b/i)
+      if (monthDay) {
+        parsed.date = monthDay[0]
+      } else {
+        // Try numeric formats
+        const fallbackDate = text.match(/\b\d{1,2}\/\d{1,2}\/\d{4}\b|\b\w+\s+\d{1,2},?\s+\d{4}\b/i)
+        if (fallbackDate) parsed.date = fallbackDate[0]
+      }
+    }
+  }
+
+  // Generic time fallback - try to parse any time range in the text
+  if (!parsed.time) {
+    // Try to find any time range pattern in the text
+    const timeRangePattern = text.match(/\b(\d{1,2}(?::\d{2})?(?:\s*[AaPp]\.?[Mm]\.?)?)\s*(?:-|to|–|—)\s*(\d{1,2}(?::\d{2})?(?:\s*[AaPp]\.?[Mm]\.?)?)\b/i)
+    if (timeRangePattern) {
+      const compact = `${timeRangePattern[1]} - ${timeRangePattern[2]}`
+      const norm = parseTimeRange(compact)
+      if (norm.isValid && norm.startTime && norm.endTime) {
+        parsed.time = renderAMPM(norm.startTime) + ' to ' + renderAMPM(norm.endTime)
+      }
+    } else {
+      // Fallback to single time
+      const fallbackTime = text.match(/\b\d{1,2}:\d{2}\s*(?:AM|PM)\b/i)
+      if (fallbackTime) parsed.time = fallbackTime[0]
+    }
+  }
+
+  // Enhanced job name extraction for unstructured text
+  // If we still don't have a job name, try to extract the main event/activity
+  if (!parsed.jobName) {
+    // Remove time and date patterns to find the main content
+    const cleanedText = text
+      .replace(/\d{1,2}[-–—]\d{1,2}(?::\d{2})?\s*(?:am|pm|AM|PM)/gi, '') // Remove time ranges
+      .replace(/\b\d{1,2}:\d{2}\s*(?:am|pm|AM|PM)\b/gi, '') // Remove single times
+      .replace(/\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2}(?:st|nd|rd|th)?,?\s*\d{0,4}\b/gi, '') // Remove dates
+      .replace(/\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/g, '') // Remove numeric dates
+      .trim()
+    
+    // Extract meaningful phrases (2-5 words, avoiding very short or very long)
+    const phrases = cleanedText.match(/\b\w+(?:\s+\w+){1,4}\b/g)
+    if (phrases && phrases.length > 0) {
+      // Take the longest meaningful phrase as the job name
+      const longestPhrase = phrases.reduce((a, b) => a.length > b.length ? a : b)
+      if (longestPhrase.length >= 5) { // Only use if it's meaningful
+        parsed.jobName = longestPhrase.trim()
+      }
+    }
+  }
+
+  return parsed
+}
 
 // Convert a 24h HH:MM string to "H:MM AM/PM"
 function renderAMPM(hhmm: string): string {
