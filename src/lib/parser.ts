@@ -13,20 +13,31 @@ interface ParsedJob {
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '')
 
 export async function parseEmailText(text: string): Promise<ParsedJob> {
-  // Try Gemini API first
+  // Always get regex parsing as baseline
+  const regexResult = parseWithRegex(text)
+  
+  // Try Gemini API to enhance the result
   try {
     console.log('Attempting Gemini parsing...')
     const geminiResult = await parseWithGemini(text)
     console.log('Gemini result:', geminiResult)
-    if (geminiResult && (geminiResult.date || geminiResult.time || geminiResult.jobName || geminiResult.location || geminiResult.details)) {
-      return geminiResult
+    
+    // Merge results: use Gemini values when present, otherwise use regex
+    if (geminiResult) {
+      return {
+        date: geminiResult.date || regexResult.date,
+        time: geminiResult.time || regexResult.time,
+        jobName: geminiResult.jobName || regexResult.jobName,
+        location: geminiResult.location || regexResult.location,
+        details: geminiResult.details || regexResult.details
+      }
     }
   } catch (error) {
-    console.error('Gemini parsing failed, falling back to regex:', error)
+    console.error('Gemini parsing failed, using regex only:', error)
   }
 
-  // Fallback to regex parsing
-  return parseWithRegex(text)
+  // Return regex result if Gemini failed or returned nothing
+  return regexResult
 }
 
 async function parseWithGemini(text: string): Promise<ParsedJob> {
