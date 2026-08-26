@@ -54,13 +54,17 @@ for (const d of ['Tuesday, June 24, 2025', 'June 24, 2025', 'June 24th', '09/15/
 }
 
 console.log('\n=== USPTO parse ===')
+let t0 = Date.now()
 const a = await parseEmailText(uspto)
+console.log('elapsed ms:', Date.now() - t0)
 console.log(JSON.stringify(a, null, 2))
 const na = normalizeParsedJob(a)
 console.log('normalized:', na)
 
 console.log('\n=== inABLE parse ===')
+t0 = Date.now()
 const b = await parseEmailText(inable)
+console.log('elapsed ms:', Date.now() - t0)
 console.log(JSON.stringify(b, null, 2))
 const nb = normalizeParsedJob(b)
 console.log('normalized:', nb)

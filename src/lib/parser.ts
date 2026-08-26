@@ -17,23 +17,28 @@ function getGeminiClient() {
   return new GoogleGenerativeAI(key)
 }
 
+const GEMINI_TIMEOUT_MS = 8000
+const GEMINI_MAX_EMAIL_CHARS = 8000
+
 export async function parseEmailText(text: string): Promise<ParsedJob> {
-  // Always get regex parsing as baseline
   const regexResult = parseWithRegex(text)
-  
-  // Try Gemini API to enhance the result
+
+  // Structured captioning emails (inABLE / USPTO) are already fully extracted
+  // by regex. Skipping Gemini here is the main latency win (often several seconds).
+  if (isStructuredParseComplete(regexResult, text)) {
+    return regexResult
+  }
+
   try {
-    console.log('Attempting Gemini parsing...')
-    const geminiResult = await parseWithGemini(text)
-    console.log('Gemini result:', geminiResult)
-    
+    const geminiResult = await withTimeout(parseWithGemini(text), GEMINI_TIMEOUT_MS)
+
     // Merge: Gemini fills gaps, but prefer structured regex for org/customer names
     // and richer details (Gemini often drops meeting fields when unsure)
     if (geminiResult) {
       return {
         date: preferRicher(geminiResult.date, regexResult.date),
         time: geminiResult.time || regexResult.time,
-        jobName: regexResult.jobName || geminiResult.jobName,
+        jobName: geminiResult.jobName || regexResult.jobName,
         location: geminiResult.location || regexResult.location,
         details: preferRicher(geminiResult.details, regexResult.details)
       }
@@ -42,97 +47,83 @@ export async function parseEmailText(text: string): Promise<ParsedJob> {
     console.error('Gemini parsing failed, using regex only:', error)
   }
 
-  // Return regex result if Gemini failed or returned nothing
   return regexResult
 }
 
-async function parseWithGemini(text: string): Promise<ParsedJob> {
-  // gemini-2.0-flash-exp was shut down June 2026; use current Flash GA model
-  const model = getGeminiClient().getGenerativeModel({ model: "gemini-3.6-flash" })
+function isStructuredParseComplete(parsed: ParsedJob, text: string): boolean {
+  const looksStructured = /(?:^|\n)\s*(?:Organization:|Customer\s+\S|Job Title\s+|Captioner Connection Time:|Scheduled Start:)/im.test(text)
+  return looksStructured && Boolean(parsed.date && parsed.time && parsed.jobName)
+}
 
-  const prompt = `
- Extract event information from this captioning job email. Return ONLY a JSON object with these exact fields:
- 
- {
-   "date": "the date INCLUDING YEAR when present (e.g., 'June 24, 2025' or 'Tuesday, April 8, 2025')",
-   "time": "the time range (e.g., '2:00 PM to 3:30 PM')", 
-   "jobName": "the Customer/Organization name ONLY (e.g., 'US Patent and Trademark Office', 'inABLE') — — NEVER the Job Title/Event name",
-   "location": "meeting platform with key info (e.g., 'Zoom - Meeting ID: 123456')",
-   "details": "formatted details with newlines between sections"
- }
- 
- CAPTIONING WORKFLOW RULES - Handle Multiple Formats:
- 
- FORMAT 1 (inABLE style):
- - Organization: [name] ← USE AS jobName
- - Captioner Connection Time supersedes Scheduled Start
- 
- FORMAT 2 (USPTO style):
- - Customer: [name] ← USE AS jobName (required)
- - Job Title: [description] ← PUT IN details as "Event: ...", never as jobName
- - Use date/time from header — keep the year in the date field
- 
- TIME RULES (VERY IMPORTANT):
- - Do not infer PM when AM is present, or vice versa.
- - If the end has AM/PM and the start does not, apply the end period to the start, unless the start hour > end hour, then use the opposite period (e.g., "10-3pm" means 10am-3pm).
- - Accept compact formats like "2-230pm", "8am-9am", "2 PM - 3", "2 to 3:30 pm".
- - Output time as "H:MM AM/PM to H:MM AM/PM" with correct AM/PM on both sides.
- 
- ONLY INCLUDE IN DETAILS if the information actually exists:
- - Event/Job Title (if found)
- - Service Type/Service (if mentioned)
- - Meeting Details (only fields that have real values - NO "N/A" or empty fields)
- - Rate information (only if present)
- - Meeting Link (only if actual link exists)
- - Contact information (only if present)
- - Special instructions (only if present)
- 
- CRITICAL RULES:
- - DO NOT include fields with "N/A", "N/A", or empty values
- - DO NOT create placeholder sections if information doesn't exist
- - Only add sections that contain real, useful information
- - If a meeting field is empty/missing, skip it entirely
- 
- Format details like:
- "Event: [job title/event name]
- 
- Service: [service type]
- 
- Meeting Number: [number]
- Password: [password]
- Dial-in: [phone number]
- 
- Rate: [rate]
- 
- Contact: [contact info]
- 
- Meeting Link: [actual link]"
- 
- But only include the lines that have real data!
- 
- Email text:
- ${text}
- `
- 
-   const result = await model.generateContent(prompt)
-   const response = await result.response
-   const responseText = response.text().trim()
-   
-   // Clean up the response to extract just the JSON
-   let jsonText = responseText
-   if (jsonText.includes('```json')) {
-     jsonText = jsonText.split('```json')[1].split('```')[0].trim()
-   } else if (jsonText.includes('```')) {
-     jsonText = jsonText.split('```')[1].split('```')[0].trim()
-   }
-   
-   try {
-     return JSON.parse(jsonText)
-   } catch (error) {
-     console.error('Failed to parse Gemini JSON response:', error)
-     throw error
-   }
- }
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`Gemini timed out after ${ms}ms`)), ms)
+    promise.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (err) => {
+        clearTimeout(timer)
+        reject(err)
+      }
+    )
+  })
+}
+
+async function parseWithGemini(text: string): Promise<ParsedJob> {
+  // Flash-Lite is built for extraction: default thinking is minimal, much lower latency
+  // than gemini-3.6-flash (which thinks at medium by default).
+  const model = getGeminiClient().getGenerativeModel({
+    model: 'gemini-3.5-flash-lite',
+    generationConfig: {
+      temperature: 0,
+      maxOutputTokens: 1024,
+      responseMimeType: 'application/json',
+    },
+  })
+
+  const emailText = text.length > GEMINI_MAX_EMAIL_CHARS
+    ? text.slice(0, GEMINI_MAX_EMAIL_CHARS)
+    : text
+
+  const prompt = `Extract event information from this captioning job email. Return ONLY JSON with:
+{
+  "date": "date including year when present (e.g. 'June 24, 2025')",
+  "time": "time range as 'H:MM AM/PM to H:MM AM/PM'",
+  "jobName": "Customer/Organization name ONLY — never the Job Title/Event name",
+  "location": "meeting platform with key info (e.g. 'Zoom - Meeting ID: 123456')",
+  "details": "formatted details with newlines between sections"
+}
+
+FORMAT 1 (inABLE): Organization → jobName. Captioner Connection Time supersedes Scheduled Start.
+FORMAT 2 (USPTO): Customer → jobName. Job Title goes in details as "Event: ...", never as jobName.
+
+TIME: Do not infer PM when AM is present or vice versa. If only the end has AM/PM, apply it to the start unless start hour > end hour (then opposite, e.g. "10-3pm" = 10am-3pm). Accept "2-230pm", "8am-9am", "2 PM - 3", "2 to 3:30 pm".
+
+DETAILS: only include sections that have real values (Event/Job Title, Service, Meeting Number, Password, Dial-in, Rate, Contact, Meeting Link). Never "N/A" or empty placeholders.
+
+Email:
+${emailText}`
+
+  const result = await model.generateContent(prompt)
+  const response = await result.response
+  const responseText = response.text().trim()
+
+  let jsonText = responseText
+  if (jsonText.includes('```json')) {
+    jsonText = jsonText.split('```json')[1].split('```')[0].trim()
+  } else if (jsonText.includes('```')) {
+    jsonText = jsonText.split('```')[1].split('```')[0].trim()
+  }
+
+  try {
+    return JSON.parse(jsonText)
+  } catch (error) {
+    console.error('Failed to parse Gemini JSON response:', error)
+    throw error
+  }
+}
  
  function parseWithRegex(text: string): ParsedJob {
    const parsed: ParsedJob = {}
