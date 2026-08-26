@@ -214,11 +214,30 @@ export function normalizeDateFormat(dateStr: string): string | undefined {
 
   const cleanDate = dateStr.trim()
 
-  // Try different date formats
+  // Named months: "Tuesday, June 24, 2025" / "June 24th" / "June 24, 2025"
+  const named = cleanDate.match(
+    /\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s*((?:19|20)\d{2}))?\b/i
+  )
+  if (named) {
+    const months: Record<string, number> = {
+      january: 1, jan: 1, february: 2, feb: 2, march: 3, mar: 3, april: 4, apr: 4,
+      may: 5, june: 6, jun: 6, july: 7, jul: 7, august: 8, aug: 8,
+      september: 9, sep: 9, sept: 9, october: 10, oct: 10, november: 11, nov: 11,
+      december: 12, dec: 12,
+    }
+    const month = months[named[1].toLowerCase()]
+    const day = parseInt(named[2], 10)
+    const year = named[3] ? parseInt(named[3], 10) : new Date().getFullYear()
+    if (month && day >= 1 && day <= 31) {
+      return `${year}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`
+    }
+  }
+
+  // Try different numeric date formats
   const formats = [
     // MM-DD-YY or MM-DD-YYYY
     /^(\d{1,2})-(\d{1,2})-(\d{2,4})$/,
-    // MM/DD/YY or MM/DD/YYYY  
+    // MM/DD/YY or MM/DD/YYYY
     /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/,
     // YYYY-MM-DD (already correct)
     /^(\d{4})-(\d{1,2})-(\d{1,2})$/,
@@ -230,7 +249,7 @@ export function normalizeDateFormat(dateStr: string): string | undefined {
     const match = cleanDate.match(format)
     if (match) {
       const [, first, second, third] = match
-      
+
       let year: number, month: number, day: number
 
       if (format === formats[2]) {
@@ -248,7 +267,7 @@ export function normalizeDateFormat(dateStr: string): string | undefined {
         month = parseInt(first, 10)
         day = parseInt(second, 10)
         year = parseInt(third, 10)
-        
+
         // Handle 2-digit years
         if (year < 100) {
           year += year < 50 ? 2000 : 1900
@@ -263,4 +282,4 @@ export function normalizeDateFormat(dateStr: string): string | undefined {
   }
 
   return undefined
-} 
+}

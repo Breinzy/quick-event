@@ -16,6 +16,29 @@ interface FileParseResult {
   totalCount: number
 }
 
+
+/** Convert Excel serial dates / Date objects into a readable date string. */
+function coerceDateValue(value: any): string {
+  if (value === null || value === undefined || value === '') return ''
+  if (value instanceof Date && !isNaN(value.getTime())) {
+    const y = value.getFullYear()
+    const m = String(value.getMonth() + 1).padStart(2, '0')
+    const d = String(value.getDate()).padStart(2, '0')
+    return `${y}-${m}-${d}`
+  }
+  if (typeof value === 'number' && value > 20000 && value < 80000) {
+    // Excel serial day count (approximate Unix epoch conversion via SheetJS epoch)
+    const parsed = XLSX.SSF.parse_date_code(value)
+    if (parsed) {
+      const y = parsed.y
+      const m = String(parsed.m).padStart(2, '0')
+      const d = String(parsed.d).padStart(2, '0')
+      return `${y}-${m}-${d}`
+    }
+  }
+  return String(value).trim()
+}
+
 export async function parseUploadedFile(file: File): Promise<FileParseResult> {
   const fileName = file.name
   const extension = fileName.split('.').pop()?.toLowerCase()
@@ -49,7 +72,7 @@ async function parseExcelFile(file: File): Promise<ParsedJob[]> {
     reader.onload = (e) => {
       try {
         const data = e.target?.result
-        const workbook = XLSX.read(data, { type: 'binary' })
+        const workbook = XLSX.read(data, { type: 'binary', cellDates: true })
         
         // Get the first worksheet
         const sheetName = workbook.SheetNames[0]
@@ -211,7 +234,7 @@ function parseRowToEvent(row: any[], columnMap: Record<string, number>): ParsedJ
   }
   
   if (columnMap.date !== undefined) {
-    event.date = String(row[columnMap.date] || '').trim()
+    event.date = coerceDateValue(row[columnMap.date])
   }
   
   if (columnMap.location !== undefined) {

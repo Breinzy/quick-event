@@ -9,8 +9,13 @@ interface ParsedJob {
   details?: string
 }
 
-// Initialize Gemini
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '')
+function getGeminiClient() {
+  const key = process.env.GEMINI_API_KEY || ''
+  if (!key) {
+    throw new Error('Missing GEMINI_API_KEY')
+  }
+  return new GoogleGenerativeAI(key)
+}
 
 export async function parseEmailText(text: string): Promise<ParsedJob> {
   // Always get regex parsing as baseline
@@ -22,14 +27,15 @@ export async function parseEmailText(text: string): Promise<ParsedJob> {
     const geminiResult = await parseWithGemini(text)
     console.log('Gemini result:', geminiResult)
     
-    // Merge results: use Gemini values when present, otherwise use regex
+    // Merge: Gemini fills gaps, but prefer structured regex for org/customer names
+    // and richer details (Gemini often drops meeting fields when unsure)
     if (geminiResult) {
       return {
-        date: geminiResult.date || regexResult.date,
+        date: preferRicher(geminiResult.date, regexResult.date),
         time: geminiResult.time || regexResult.time,
-        jobName: geminiResult.jobName || regexResult.jobName,
+        jobName: regexResult.jobName || geminiResult.jobName,
         location: geminiResult.location || regexResult.location,
-        details: geminiResult.details || regexResult.details
+        details: preferRicher(geminiResult.details, regexResult.details)
       }
     }
   } catch (error) {
@@ -41,15 +47,16 @@ export async function parseEmailText(text: string): Promise<ParsedJob> {
 }
 
 async function parseWithGemini(text: string): Promise<ParsedJob> {
-  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" })
+  // gemini-2.0-flash-exp was shut down June 2026; use current Flash GA model
+  const model = getGeminiClient().getGenerativeModel({ model: "gemini-3.6-flash" })
 
   const prompt = `
  Extract event information from this captioning job email. Return ONLY a JSON object with these exact fields:
  
  {
-   "date": "the date (e.g., 'June 24th' or 'April 8, 2025')",
+   "date": "the date INCLUDING YEAR when present (e.g., 'June 24, 2025' or 'Tuesday, April 8, 2025')",
    "time": "the time range (e.g., '2:00 PM to 3:30 PM')", 
-   "jobName": "the Customer/Organization name (e.g., 'US Patent and Trademark Office', 'inABLE')",
+   "jobName": "the Customer/Organization name ONLY (e.g., 'US Patent and Trademark Office', 'inABLE') — — NEVER the Job Title/Event name",
    "location": "meeting platform with key info (e.g., 'Zoom - Meeting ID: 123456')",
    "details": "formatted details with newlines between sections"
  }
@@ -61,9 +68,9 @@ async function parseWithGemini(text: string): Promise<ParsedJob> {
  - Captioner Connection Time supersedes Scheduled Start
  
  FORMAT 2 (USPTO style):
- - Customer: [name] ← USE AS jobName  
- - Job Title: [description] ← PUT IN details
- - Use date/time from header
+ - Customer: [name] ← USE AS jobName (required)
+ - Job Title: [description] ← PUT IN details as "Event: ...", never as jobName
+ - Use date/time from header — keep the year in the date field
  
  TIME RULES (VERY IMPORTANT):
  - Do not infer PM when AM is present, or vice versa.
@@ -167,7 +174,7 @@ async function parseWithGemini(text: string): Promise<ParsedJob> {
    
    // Contact information
    const clientMatch = text.match(/Client\s+(.+)/i)
-   const pocMatch = text.match(/On-Site POCs?\s+([\s\S]+?)(?:\n\w+\s+|$)/i)
+   const pocMatch = text.match(/On-Site POCs?\s+([^\n]+(?:\n(?![A-Z][a-z]+:|https?:\/\/|Meeting |Rate |Client |Organization |Customer |Event |Service )[^\n]+)*)/i)
    
    // TIME PARSING
    
@@ -326,7 +333,19 @@ async function parseWithGemini(text: string): Promise<ParsedJob> {
    }
    
    if (foundUrls.length > 0) {
-     details.push(`Meeting Link: ${foundUrls[0]}`)
+     const cleaned = foundUrls.map(u => u.replace(/[.,;)]+$/, '').trim())
+     const uniqueUrls: string[] = []
+     const seen = new Set<string>()
+     for (const u of cleaned) {
+       const key = u.replace(/^https?:\/\//i, '').toLowerCase()
+       if (!seen.has(key)) {
+         seen.add(key)
+         uniqueUrls.push(u.startsWith('http') ? u : `https://${u}`)
+       }
+     }
+     details.push(uniqueUrls.length === 1
+       ? `Meeting Link: ${uniqueUrls[0]}`
+       : `Meeting Links:\n${uniqueUrls.join('\n')}`)
    } else if (meetingLinkMatch && meetingLinkMatch[1].trim() && 
               !meetingLinkMatch[1].trim().toLowerCase().includes('n/a') &&
               meetingLinkMatch[1].trim().toLowerCase() !== 'meeting link') {
@@ -423,4 +442,17 @@ function renderAMPM(hhmm: string): string {
   const period = h >= 12 ? 'PM' : 'AM'
   const hour12 = h % 12 === 0 ? 12 : h % 12
   return `${hour12}:${m.toString().padStart(2, '0')} ${period}`
+}
+
+/** Prefer the non-empty value that carries more information (e.g. includes a year or more meeting fields). */
+function preferRicher(a?: string, b?: string): string | undefined {
+  const left = (a || '').trim()
+  const right = (b || '').trim()
+  if (!left) return right || undefined
+  if (!right) return left || undefined
+  // Prefer the value that includes a 4-digit year when the other does not
+  const yearRe = /\b(19|20)\d{2}\b/
+  if (yearRe.test(left) && !yearRe.test(right)) return left
+  if (yearRe.test(right) && !yearRe.test(left)) return right
+  return left.length >= right.length ? left : right
 } 

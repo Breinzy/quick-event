@@ -32,49 +32,51 @@ export function normalizeParsedJob(parsed: any): NormalizedJob {
 
 function normalizeDate(dateStr: string, currentYear: number): string {
   if (!dateStr) return ''
-  
-  // Handle various date formats
-  const datePatterns = [
-    // "24th of June" or "24th of june"
-    /(\d{1,2})(?:st|nd|rd|th)?\s+of\s+(\w+)/i,
-    // "June 24th" or "june 24"
-    /(\w+)\s+(\d{1,2})(?:st|nd|rd|th)?/i,
-    // "06/24/2024" or "6/24/24"
-    /(\d{1,2})\/(\d{1,2})\/(\d{2,4})/,
-    // "2024-06-24"
-    /(\d{4})-(\d{1,2})-(\d{1,2})/
-  ]
 
-  for (const pattern of datePatterns) {
-    const match = dateStr.match(pattern)
-    if (match) {
-      if (pattern.source.includes('of')) {
-        // "24th of June" format
-        const day = parseInt(match[1])
-        const monthName = match[2]
-        const month = getMonthNumber(monthName)
-        return `${currentYear}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`
-      } else if (pattern.source.includes('\\w+')) {
-        // "June 24th" format
-        const monthName = match[1]
-        const day = parseInt(match[2])
-        const month = getMonthNumber(monthName)
-        return `${currentYear}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`
-      } else if (pattern.source.includes('\\/')) {
-        // MM/DD/YYYY format
-        const month = parseInt(match[1])
-        const day = parseInt(match[2])
-        let year = parseInt(match[3])
-        if (year < 100) year += 2000 // Handle 2-digit years
-        return `${year}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`
-      } else if (pattern.source.includes('-')) {
-        // YYYY-MM-DD format (already normalized)
-        return dateStr
-      }
-    }
+  // Prefer an explicit 4-digit year anywhere in the string when present
+  const yearMatch = dateStr.match(/\b((?:19|20)\d{2})\b/)
+  const yearFromText = yearMatch ? parseInt(yearMatch[1], 10) : currentYear
+
+  // "Tuesday, June 24, 2025" / "June 24th, 2025" / "June 24"
+  const monthDay = dateStr.match(
+    /\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\s+(\d{1,2})(?:st|nd|rd|th)?\b/i
+  )
+  if (monthDay) {
+    const month = getMonthNumber(monthDay[1])
+    const day = parseInt(monthDay[2], 10)
+    return `${yearFromText}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`
   }
-  
-  return dateStr // Return as-is if no pattern matches
+
+  // "24th of June, 2025" / "24 of June"
+  const dayOfMonth = dateStr.match(
+    /(\d{1,2})(?:st|nd|rd|th)?\s+of\s+(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\b/i
+  )
+  if (dayOfMonth) {
+    const day = parseInt(dayOfMonth[1], 10)
+    const month = getMonthNumber(dayOfMonth[2])
+    return `${yearFromText}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`
+  }
+
+  // MM/DD/YYYY or M/D/YY
+  const slash = dateStr.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/)
+  if (slash) {
+    const month = parseInt(slash[1], 10)
+    const day = parseInt(slash[2], 10)
+    let year = parseInt(slash[3], 10)
+    if (year < 100) year += 2000
+    return `${year}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`
+  }
+
+  // YYYY-MM-DD
+  const iso = dateStr.match(/(\d{4})-(\d{1,2})-(\d{1,2})/)
+  if (iso) {
+    const year = parseInt(iso[1], 10)
+    const month = parseInt(iso[2], 10)
+    const day = parseInt(iso[3], 10)
+    return `${year}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`
+  }
+
+  return dateStr
 }
 
 function normalizeStartTime(timeStr: string): string {
