@@ -22,32 +22,34 @@ const GEMINI_MAX_EMAIL_CHARS = 8000
 
 export async function parseEmailText(text: string): Promise<ParsedJob> {
   const regexResult = parseWithRegex(text)
+  let result = regexResult
 
   // Structured captioning emails (inABLE / USPTO) are already fully extracted
   // by regex. Skipping Gemini here is the main latency win (often several seconds).
-  if (isStructuredParseComplete(regexResult, text)) {
-    return regexResult
-  }
+  if (!isStructuredParseComplete(regexResult, text)) {
+    try {
+      const geminiResult = await withTimeout(parseWithGemini(text), GEMINI_TIMEOUT_MS)
 
-  try {
-    const geminiResult = await withTimeout(parseWithGemini(text), GEMINI_TIMEOUT_MS)
-
-    // Merge: Gemini fills gaps, but prefer structured regex for org/customer names
-    // and richer details (Gemini often drops meeting fields when unsure)
-    if (geminiResult) {
-      return {
-        date: preferRicher(geminiResult.date, regexResult.date),
-        time: geminiResult.time || regexResult.time,
-        jobName: geminiResult.jobName || regexResult.jobName,
-        location: geminiResult.location || regexResult.location,
-        details: preferRicher(geminiResult.details, regexResult.details)
+      // Merge: Gemini fills gaps, but prefer structured regex for org/customer names
+      // and richer details (Gemini often drops meeting fields when unsure)
+      if (geminiResult) {
+        result = {
+          date: preferRicher(geminiResult.date, regexResult.date),
+          time: geminiResult.time || regexResult.time,
+          jobName: geminiResult.jobName || regexResult.jobName,
+          location: geminiResult.location || regexResult.location,
+          details: preferRicher(geminiResult.details, regexResult.details)
+        }
       }
+    } catch (error) {
+      console.error('Gemini parsing failed, using regex only:', error)
     }
-  } catch (error) {
-    console.error('Gemini parsing failed, using regex only:', error)
   }
 
-  return regexResult
+  return {
+    ...result,
+    date: attachYear(result.date, text)
+  }
 }
 
 function isStructuredParseComplete(parsed: ParsedJob, text: string): boolean {
@@ -87,14 +89,19 @@ async function parseWithGemini(text: string): Promise<ParsedJob> {
     ? text.slice(0, GEMINI_MAX_EMAIL_CHARS)
     : text
 
+  const now = new Date()
+  const currentYear = now.getFullYear()
+  const todayLocal = `${currentYear}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
   const prompt = `Extract event information from this captioning job email. Return ONLY JSON with:
 {
-  "date": "date including year when present (e.g. 'June 24, 2025')",
+  "date": "date including year (e.g. 'June 24, ${currentYear}')",
   "time": "time range as 'H:MM AM/PM to H:MM AM/PM'",
   "jobName": "Customer/Organization name ONLY — never the Job Title/Event name",
   "location": "meeting platform with key info (e.g. 'Zoom - Meeting ID: 123456')",
   "details": "formatted details with newlines between sections"
 }
+
+YEAR: Today is ${todayLocal}. If the email omits the year, use ${currentYear} — the current calendar year. Never invent a different year.
 
 FORMAT 1 (inABLE): Organization → jobName. Captioner Connection Time supersedes Scheduled Start.
 FORMAT 2 (USPTO): Customer → jobName. Job Title goes in details as "Event: ...", never as jobName.
@@ -446,4 +453,44 @@ function preferRicher(a?: string, b?: string): string | undefined {
   if (yearRe.test(left) && !yearRe.test(right)) return left
   if (yearRe.test(right) && !yearRe.test(left)) return right
   return left.length >= right.length ? left : right
-} 
+}
+
+const YEAR_RE = /\b((?:19|20)\d{2})\b/
+
+/** Years that appear as part of an actual date, not copyright/footer noise. */
+function yearsInDateContext(text: string): Set<string> {
+  const found = new Set<string>()
+  const patterns = [
+    /\b(?:january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\s+\d{1,2}(?:st|nd|rd|th)?,?\s*((?:19|20)\d{2})\b/gi,
+    /\b\d{1,2}\/\d{1,2}\/((?:19|20)\d{2})\b/g,
+    /\b((?:19|20)\d{2})-\d{1,2}-\d{1,2}\b/g,
+    /\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday),?\s+\w+\s+\d{1,2},?\s*((?:19|20)\d{2})\b/gi,
+  ]
+  for (const pattern of patterns) {
+    for (const match of text.matchAll(pattern)) {
+      const year = match[1]
+      if (year) found.add(year)
+    }
+  }
+  return found
+}
+
+function currentYear(): number {
+  return new Date().getFullYear()
+}
+
+/** Keep an explicit year from the email; otherwise use this calendar year. */
+function attachYear(date: string | undefined, sourceText: string): string | undefined {
+  if (!date) return date
+  const sourceYears = yearsInDateContext(sourceText)
+  const year = currentYear()
+  const dateYear = date.match(YEAR_RE)?.[1]
+
+  if (dateYear) {
+    if (sourceYears.has(dateYear)) return date
+    return date.replace(YEAR_RE, String(year))
+  }
+
+  return `${date.trim().replace(/[,\s]+$/, '')}, ${year}`
+}
+ 

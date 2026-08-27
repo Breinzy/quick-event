@@ -68,7 +68,7 @@ export default function JobPreview({ job, onConfirm, onBack, isLoading = false, 
               value={editedJob.date || ''}
               onChange={(e) => handleInputChange('date', e.target.value)}
               className="w-full px-4 py-3 bg-gray-900/50 border border-gray-600 text-white rounded-lg focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
-              placeholder="Enter date (e.g., June 24, 2025)"
+              placeholder={`Enter date (e.g., June 24, ${new Date().getFullYear()})`}
               disabled={isLoading}
             />
           </div>

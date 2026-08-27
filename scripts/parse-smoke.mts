@@ -79,6 +79,22 @@ checks.push(['USPTO has zoom link', /zoom\.us\/j\/987654321/.test(na.details)])
 checks.push(['inABLE jobName', /inABLE/i.test(nb.jobName)])
 checks.push(['inABLE uses captioner time 13:45', nb.startTime === '13:45'])
 
+const currentYear = new Date().getFullYear()
+const noYear = `Job Details
+Wednesday, September 10
+2:00 PM to 3:30 PM
+Customer Test Org
+Job Title Training
+© 2025 Acme Corp
+`
+console.log('\n=== Year inference (no year in date) ===')
+const c = await parseEmailText(noYear)
+const nc = normalizeParsedJob(c)
+console.log(c.date, '->', nc.date)
+checks.push(['no-year date uses current calendar year', nc.date.startsWith(`${currentYear}-`)])
+checks.push(['no-year date is September 10', nc.date.endsWith('-09-10')])
+checks.push(['copyright year is ignored', !nc.date.startsWith('2025')])
+
 console.log('\n=== CHECKS ===')
 let failed = 0
 for (const [name, ok] of checks) {
